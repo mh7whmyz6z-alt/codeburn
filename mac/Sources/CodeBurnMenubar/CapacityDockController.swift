@@ -145,15 +145,10 @@ final class CapacityDockController {
         }
     }
 
-    /// Panel height for the glance popover, measured from the same store content
-    /// `CapacityDockDetailView` renders.
+    /// Panel height for the local stacked hover card.
     private func glanceDetailHeight(for provider: CapacityDockProvider) -> CGFloat {
-        return CapacityDockMetrics.detailHeight(
+        return CapacityDockMetrics.stackedDetailHeight(
             quota: store.capacityDockQuotaSummary(for: provider),
-            provider: provider,
-            sessionCount: store.capacityDockLiveSessions(for: provider)?.count,
-            hasToday: store.capacityDockToday(for: provider) != nil,
-            tailEdge: model.detailTailEdge,
             scale: model.detailScale
         )
     }

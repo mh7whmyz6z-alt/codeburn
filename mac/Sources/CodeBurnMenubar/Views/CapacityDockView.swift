@@ -123,6 +123,30 @@ enum CapacityDockMetrics {
         )
         return ((height * scale).rounded() + connection).rounded()
     }
+
+    /// Local stacked hover card from before the glance rewrite. Rows, bars,
+    /// reset copy, and the source footer — no Today $ and no session pills.
+    static func stackedDetailHeight(quota: QuotaSummary?, scale: CGFloat) -> CGFloat {
+        guard let quota else { return (186 * scale).rounded() }
+        let rows = min(max(quota.details.count, quota.primary == nil ? 0 : 1), 5)
+        let visibleFooter = CapacityDockQuotaPresentation.visibleFooterLines(
+            quota.footerLines,
+            connection: quota.connection
+        )
+        let footer = visibleFooter.isEmpty ? 0 : min(visibleFooter.count, 2) * 16 + 4
+        let actionExtra: CGFloat = CapacityDockConnectionAction.resolve(quota: quota) == nil ? 0 : 38
+        let connectionExtra: CGFloat = switch quota.connection {
+        case .terminalFailure: 90
+        case .disconnected: 18
+        case .loading, .stale, .transientFailure: 16
+        case .connected: 0
+        }
+        let base = min(
+            470,
+            max(132, 88 + CGFloat(rows) * 50 + CGFloat(footer) + actionExtra + connectionExtra)
+        )
+        return (base * scale).rounded()
+    }
 }
 
 /// Fixed block heights shared by the glance popover's layout and its panel
@@ -895,14 +919,14 @@ struct CapacityDockDetailView: View {
     }
 
     private var detailInsets: EdgeInsets {
-        let tailAllowance = CapacityDockGlance.tailAllowance * model.detailScale
-        // Every section carries its own padding, so the panel adds only the tail's
-        // allowance on whichever side the tail points.
+        let horizontal = 22 * model.detailScale
+        let vertical = 16 * model.detailScale
+        let tailAllowance = 18 * model.detailScale
         return EdgeInsets(
-            top: model.detailTailEdge == .top ? tailAllowance : 0,
-            leading: model.detailTailEdge == .left ? tailAllowance : 0,
-            bottom: model.detailTailEdge == .bottom ? tailAllowance : 0,
-            trailing: model.detailTailEdge == .right ? tailAllowance : 0
+            top: vertical + (model.detailTailEdge == .top ? tailAllowance : 0),
+            leading: horizontal + (model.detailTailEdge == .left ? tailAllowance : 0),
+            bottom: vertical + (model.detailTailEdge == .bottom ? tailAllowance : 0),
+            trailing: horizontal + (model.detailTailEdge == .right ? tailAllowance : 0)
         )
     }
 
@@ -932,21 +956,31 @@ struct CapacityDockDetailView: View {
         }
     }
 
-    /// Sections stack at fixed heights that mirror `CapacityDockMetrics.detailHeight`,
-    /// because the panel frame is computed rather than fitted. Separators are
-    /// overlays so a hairline never adds a point the height did not reserve.
+    /// Local stacked card: title, quota rows with bars, reset copy, source footer.
     @ViewBuilder
     private func glance(for provider: CapacityDockProvider, quota: QuotaSummary) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            headerSection(provider, plan: quota.planLabel).dividerBelow()
-            noticeSection(quota.connection, provider: provider)
-            if let sessions = store.capacityDockLiveSessions(for: provider) {
-                sessionsSection(sessions).dividerBelow()
+        VStack(alignment: .leading, spacing: 11 * model.detailScale) {
+            header(provider, plan: quota.planLabel)
+            connectionLabel(quota.connection, provider: provider)
+            if quota.details.isEmpty, let primary = quota.primary {
+                CapacityDockQuotaRow(window: primary, scale: model.detailScale)
+            } else {
+                ForEach(Array(quota.details.prefix(5).enumerated()), id: \.offset) { _, window in
+                    CapacityDockQuotaRow(window: window, scale: model.detailScale)
+                }
             }
-            if let today = store.capacityDockToday(for: provider) {
-                todaySection(today).dividerBelow()
+            let footerLines = CapacityDockQuotaPresentation.visibleFooterLines(
+                quota.footerLines,
+                connection: quota.connection
+            )
+            if !footerLines.isEmpty {
+                Divider().overlay(Color.capacityDockText.opacity(0.12))
+                ForEach(Array(footerLines.prefix(2).enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.capacityDockText.opacity(0.58))
+                }
             }
-            if CapacityDockGlance.drawsWindows(quota) { windowsSection(quota) }
             Spacer(minLength: 0)
             connectButton(provider, quota: quota)
         }
@@ -994,24 +1028,22 @@ struct CapacityDockDetailView: View {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
-                    // Matches the 17pt title's cap height plus a little, so the
-                    // mark reads as its equal rather than as a bullet.
-                    .frame(width: 18 * s, height: 18 * s)
+                    .foregroundStyle(Color.capacityDockText)
+                    .frame(width: 24 * s, height: 24 * s)
             }
-            Text(provider.displayName)
+            Text("\(provider.displayName) Usage")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Color.capacityDockText)
-            Spacer(minLength: 6)
+            Spacer(minLength: 8)
             // Several providers fall back to their own name as the plan label
             // when no plan is known, which draws the title twice in one row.
             if let plan = CapacityDockGlance.headerPlanLabel(plan, provider: provider) {
                 Text(plan)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Color.capacityDockText.opacity(0.6))
+                    .foregroundStyle(Color.capacityDockText.opacity(0.62))
                     .lineLimit(1)
             }
         }
-        .frame(height: 20 * s)
     }
 
     @ViewBuilder
@@ -1533,6 +1565,53 @@ private struct PercentGaugeReveal: Shape {
         path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
         path.closeSubpath()
         return path
+    }
+}
+
+private struct CapacityDockQuotaRow: View {
+    let window: QuotaSummary.Window
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6 * scale) {
+            HStack(alignment: .firstTextBaseline, spacing: 8 * scale) {
+                Text(CapacityDockQuotaPresentation.displayLabel(window.label))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.capacityDockText.opacity(0.82))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Text(window.percentLabel)
+                    .font(.system(size: 12, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.capacityDockText)
+            }
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.capacityDockText.opacity(0.14))
+                    Capsule()
+                        .fill(progressColor)
+                        .frame(width: max(2, geometry.size.width * min(max(window.percent, 0), 1)))
+                }
+            }
+            .frame(height: 6 * scale)
+            if !window.resetsInLabel.isEmpty {
+                Text("Resets in \(window.resetsInLabel)")
+                    .font(.system(size: 10))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.capacityDockText.opacity(0.5))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+    }
+
+    private var progressColor: Color {
+        switch QuotaSummary.severity(for: window.percent) {
+        case .normal: return .green
+        case .warning: return .yellow
+        case .critical: return .orange
+        case .danger: return .red
+        }
     }
 }
 

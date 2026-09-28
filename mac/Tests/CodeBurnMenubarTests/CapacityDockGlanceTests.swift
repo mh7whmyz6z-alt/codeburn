@@ -437,4 +437,24 @@ struct CapacityDockGlanceTests {
                     + CapacityDockGlance.noticeRowGap * s + lineBox(10 * s, .regular)
         )
     }
+
+    @Test("Stacked hover height follows the pre-glance row formula")
+    func stackedDetailHeightMatchesOldCard() {
+        let three = [
+            QuotaSummary.Window(label: "Monthly", percent: 0.29, resetsAt: nil),
+            QuotaSummary.Window(label: "Auto", percent: 0.34, resetsAt: nil),
+            QuotaSummary.Window(label: "API", percent: 0, resetsAt: nil),
+        ]
+        let withFooter = QuotaSummary(
+            providerFilter: .cursor,
+            connection: .connected,
+            primary: three[0],
+            details: three,
+            planLabel: "Ultra",
+            footerLines: ["Source: Cursor app"]
+        )
+        // 88 + 3*50 + (16+4 footer) = 258
+        #expect(CapacityDockMetrics.stackedDetailHeight(quota: withFooter, scale: 1) == 258)
+        #expect(CapacityDockMetrics.stackedDetailHeight(quota: nil, scale: 1) == 186)
+    }
 }
