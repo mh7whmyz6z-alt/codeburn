@@ -257,7 +257,14 @@ final class AppStore {
         (CapacityDockProvider) -> Void = {
             CapacityDockPreferences.removeProvider($0)
         }
+    /// Production (`AppDelegate`) writes the real dock selection. Tests leave
+    /// this a no-op so a quota refresh cannot mutate the machine's defaults.
+    @ObservationIgnored var capacityDockProviderSelector:
+        (CapacityDockProvider, Bool) -> Void = { _, _ in }
     @ObservationIgnored var capacityDockDefaults: UserDefaults = .standard
+    @ObservationIgnored var capacityDockGrokBotIsInstalled: () -> Bool = {
+        GrokBotSubscriptionService.isInstalled()
+    }
     @ObservationIgnored var copilotQuotaRuntime: CopilotQuotaRuntime
 
     init(copilotQuotaRuntime: CopilotQuotaRuntime = .live) {
@@ -2508,7 +2515,7 @@ final class AppStore {
         }
         ProviderExplicitDisconnect.clear(provider.id, defaults: capacityDockDefaults)
         await CapacityDockProviderRefreshInteraction.userInitiated {
-            await refreshCapacityDockProvider(provider)
+            await refreshCapacityDockProvider(provider, addToDock: true)
         }
     }
 
@@ -2516,7 +2523,11 @@ final class AppStore {
     /// stays "Not connected" instead of "Reconnect required"; any other failure
     /// is recorded as usual. It skips a provider the user disconnected until
     /// they connect it again.
-    func refreshCapacityDockProvider(_ provider: CapacityDockProvider, quiet: Bool = false) async {
+    func refreshCapacityDockProvider(
+        _ provider: CapacityDockProvider,
+        quiet: Bool = false,
+        addToDock: Bool = false
+    ) async {
         guard provider.legacyFilter == nil,
               provider.catalogEntry.hasLiveCodeBurnQuotaAdapter,
               !capacityDockProvidersLoading.contains(provider.id),
@@ -2542,6 +2553,9 @@ final class AppStore {
             capacityDockProviderErrors[provider.id] = nil
             capacityDockProviderStatusTitles[provider.id] = nil
             capacityDockProviderTransientFailures.remove(provider.id)
+            if summary.connection == .connected || summary.connection == .stale {
+                capacityDockProviderSelector(provider, addToDock)
+            }
         } catch {
             guard capacityDockProviderRefreshGenerations[provider.id, default: 0] == generation,
                   !(quiet && (error as? CapacityDockProviderFetchFailure)?.notSignedIn == true) else {
@@ -2568,8 +2582,19 @@ final class AppStore {
     /// local CLI probes can touch shared system state, so serial execution is
     /// deliberately calmer than fanning 60+ connection attempts out at once.
     func refreshSelectedCapacityDockProviders() async {
-        let selected = CapacityDockPreferences.load().selectedProviders
-        for provider in selected
+        var providers = CapacityDockPreferences.load(defaults: capacityDockDefaults).selectedProviders
+        // Grok Bot has no saved credential and is not in a curated dock
+        // set, so the scheduled pass would never see it. Probe the installed
+        // app the same way Settings does, then addConnectedProvider can
+        // put a ring on the rail.
+        if let grokbot = CapacityDockProvider(rawValue: "grokbot"),
+           !providers.contains(grokbot),
+           capacityDockGrokBotIsInstalled(),
+           !ProviderExplicitDisconnect.isSet(grokbot.id, defaults: capacityDockDefaults)
+        {
+            providers.append(grokbot)
+        }
+        for provider in providers
         where provider.legacyFilter == nil && provider.catalogEntry.hasLiveCodeBurnQuotaAdapter {
             await refreshCapacityDockProvider(provider)
         }

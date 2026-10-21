@@ -176,6 +176,42 @@ struct CapacityDockProviderQuotaServiceTests {
         #expect(result == expected)
     }
 
+    @Test("a connected Grok Bot refresh puts a ring on a curated dock")
+    func grokBotRefreshSelectsDockRing() async throws {
+        let provider = try #require(CapacityDockProvider(rawValue: "grokbot"))
+        let grok = try #require(CapacityDockProvider(rawValue: "grok"))
+        let cursor = try #require(CapacityDockProvider(rawValue: "cursor"))
+        let (defaults, suiteName) = TestDefaults.make("CodeBurnMenubarTests.DockQuota.\(#function)")
+        defer { TestDefaults.forget(suiteName) }
+        defaults.set(["cursor", "grok"], forKey: CapacityDockPreferences.selectedProvidersKey)
+        defaults.set(true, forKey: CapacityDockPreferences.manualSelectionKey)
+        let store = AppStore()
+        store.capacityDockDefaults = defaults
+        store.capacityDockProviderSelector = {
+            CapacityDockPreferences.addConnectedProvider($0, force: $1, defaults: defaults)
+        }
+        store.capacityDockCredentialLoader = { _ in CapacityDockProviderCredential() }
+        store.capacityDockProviderQuotaService = CapacityDockProviderQuotaService(dependencies: .init(
+            refreshClinePass: { _ in throw CancellationError() },
+            refreshCommandCode: Self.unusedCommandCode,
+            refreshCursor: Self.unusedCursor,
+            refreshDevin: Self.unusedDevin,
+            refreshGrok: Self.unusedGrok,
+            refreshGrokBot: { Self.summary(percent: 0.41) },
+            refreshZai: Self.unusedZai,
+            refreshZcode: Self.unusedZcode
+        ))
+
+        await store.refreshCapacityDockProvider(provider)
+
+        #expect(store.capacityDockProviderIsConnected(provider))
+        #expect(
+            CapacityDockPreferences.load(defaults: defaults).selectedProviders
+                == [cursor, grok, provider]
+        )
+        #expect(defaults.bool(forKey: CapacityDockPreferences.manualSelectionKey))
+    }
+
     @Test("ZCode dispatches through passive ZCode app login discovery")
     func dispatchesZcode() async throws {
         let expected = Self.summary(percent: 0.27)

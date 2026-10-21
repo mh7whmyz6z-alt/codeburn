@@ -251,4 +251,40 @@ struct CapacityDockPreferencesTests {
         #expect(selected.contains(.codex))
         #expect(selected.contains(zcode))
     }
+
+    @Test("addConnectedProvider appends a live adapter without latching manual selection")
+    func addConnectedProviderLeavesAutoSeedOpen() throws {
+        let (defaults, suiteName) = defaults()
+        defer { TestDefaults.forget(suiteName) }
+        let grokbot = try #require(CapacityDockProvider(rawValue: "grokbot"))
+        defaults.set(["cursor", "grok"], forKey: CapacityDockPreferences.selectedProvidersKey)
+        defaults.set("cursor", forKey: CapacityDockPreferences.preferredProviderKey)
+
+        CapacityDockPreferences.addConnectedProvider(grokbot, defaults: defaults)
+
+        let snapshot = CapacityDockPreferences.load(defaults: defaults)
+        #expect(snapshot.selectedProviders.map(\.rawValue) == ["cursor", "grok", "grokbot"])
+        #expect(snapshot.preferredProvider.rawValue == "cursor")
+        #expect(!defaults.bool(forKey: CapacityDockPreferences.manualSelectionKey))
+    }
+
+    @Test("addConnectedProvider leaves a provider the user unchecked off the rail")
+    func addConnectedProviderRespectsHiddenProvider() throws {
+        let (defaults, suiteName) = defaults()
+        defer { TestDefaults.forget(suiteName) }
+        let grokbot = try #require(CapacityDockProvider(rawValue: "grokbot"))
+        let grok = try #require(CapacityDockProvider(rawValue: "grok"))
+        let cursor = try #require(CapacityDockProvider(rawValue: "cursor"))
+        CapacityDockPreferences.setSelectedProviders([cursor, grok, grokbot], defaults: defaults)
+        CapacityDockPreferences.setSelectedProviders([cursor, grok], defaults: defaults)
+
+        CapacityDockPreferences.addConnectedProvider(grokbot, defaults: defaults)
+        #expect(CapacityDockPreferences.load(defaults: defaults).selectedProviders == [cursor, grok])
+
+        CapacityDockPreferences.addConnectedProvider(grokbot, force: true, defaults: defaults)
+        #expect(
+            CapacityDockPreferences.load(defaults: defaults).selectedProviders.map(\.rawValue)
+                == ["cursor", "grok", "grokbot"]
+        )
+    }
 }

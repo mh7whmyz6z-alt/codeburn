@@ -145,6 +145,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
         // activity so a fetch is never napped mid-flight, and any user
         // interaction (popover open, wake) refreshes immediately.
 
+        store.capacityDockProviderSelector = { provider, force in
+            CapacityDockPreferences.addConnectedProvider(provider, force: force)
+        }
         restorePersistedCurrency()
         // Start the resident CLI early without an artificial query. The first
         // real status refresh becomes its only cold warm-up. See ServeConnection.

@@ -85,6 +85,7 @@ struct CapacityDockProvider: RawRepresentable, CaseIterable, Identifiable, Hasha
         case Self.copilot.rawValue: "copilot"
         case "alibabatokenplan": "alibaba"
         case "moonshot": "kimi"
+        case "grokbot": "grok"
         default: rawValue
         }
     }
@@ -184,6 +185,7 @@ enum CapacityDockPreferences {
     static let gaugeShapeKey = "CodeBurnCapacityDockGaugeShape"
     static let glanceWindowsKey = "CodeBurnCapacityDockGlanceWindows"
     static let manualSelectionKey = "CodeBurnCapacityDockManualSelection"
+    static let hiddenProvidersKey = "CodeBurnCapacityDockHiddenProviders"
 
     static let defaultProvider: CapacityDockProvider = .codex
     static let supportedProviders = CapacityDockProvider.allCases
@@ -285,6 +287,10 @@ enum CapacityDockPreferences {
     ) {
         let identifiers = providers.map(\.rawValue)
         let normalized = normalizedProviders(rawIdentifiers: identifiers)
+        let previous = normalizedProviders(
+            rawIdentifiers: defaults.stringArray(forKey: selectedProvidersKey)
+        )
+        rememberHiddenProviders(previous: previous, next: normalized, defaults: defaults)
         let currentPreferred = defaults.string(forKey: preferredProviderKey)
             .flatMap(CapacityDockProvider.init(rawValue:))
         let preferred = normalizedPreferred(currentPreferred, selected: normalized)
@@ -293,6 +299,39 @@ enum CapacityDockPreferences {
         // The user has taken over the dock provider set, so stop auto-seeding
         // from connected subscriptions and respect their choice from now on.
         defaults.set(true, forKey: manualSelectionKey)
+        notifyChanged()
+    }
+
+    /// Puts a just-connected provider on the rail without latching manual
+    /// selection. Auto-seed will not add a sixth ring once the user has
+    /// curated the set; Connect still should, or Grok Bot (and any later
+    /// live adapter) can sit in the menubar with no dock tile. `force`
+    /// is the Connect button: it undoes a previous uncheck. Quiet refresh
+    /// leaves a hidden provider hidden.
+    static func addConnectedProvider(
+        _ provider: CapacityDockProvider,
+        force: Bool = false,
+        defaults: UserDefaults = .standard
+    ) {
+        var hidden = defaults.stringArray(forKey: hiddenProvidersKey) ?? []
+        if force {
+            hidden.removeAll { $0 == provider.rawValue }
+            defaults.set(hidden, forKey: hiddenProvidersKey)
+        } else if hidden.contains(provider.rawValue) {
+            return
+        }
+
+        var stored = defaults.stringArray(forKey: selectedProvidersKey)
+            ?? normalizedProviders(rawIdentifiers: nil).map(\.rawValue)
+        guard !stored.contains(provider.rawValue) else { return }
+        stored.append(provider.rawValue)
+        defaults.set(stored, forKey: selectedProvidersKey)
+        let selected = normalizedProviders(rawIdentifiers: stored)
+        let preferred = normalizedPreferred(
+            defaults.string(forKey: preferredProviderKey).flatMap(CapacityDockProvider.init(rawValue:)),
+            selected: selected
+        )
+        defaults.set(preferred.rawValue, forKey: preferredProviderKey)
         notifyChanged()
     }
 
@@ -308,6 +347,11 @@ enum CapacityDockPreferences {
         let remaining = stored.filter { $0 != provider.rawValue }
         guard remaining.count != stored.count else { return }
         defaults.set(remaining, forKey: selectedProvidersKey)
+        rememberHiddenProviders(
+            previous: normalizedProviders(rawIdentifiers: stored),
+            next: normalizedProviders(rawIdentifiers: remaining),
+            defaults: defaults
+        )
         let preferred = normalizedPreferred(
             defaults.string(forKey: preferredProviderKey).flatMap(CapacityDockProvider.init(rawValue:)),
             selected: normalizedProviders(rawIdentifiers: remaining)
@@ -468,6 +512,20 @@ enum CapacityDockPreferences {
             normalized[identifier] = kind
         }
         return normalized
+    }
+
+    private static func rememberHiddenProviders(
+        previous: [CapacityDockProvider],
+        next: [CapacityDockProvider],
+        defaults: UserDefaults
+    ) {
+        let nextIDs = Set(next.map(\.rawValue))
+        let removed = previous.map(\.rawValue).filter { !nextIDs.contains($0) }
+        guard !removed.isEmpty || !nextIDs.isEmpty else { return }
+        var hidden = Set(defaults.stringArray(forKey: hiddenProvidersKey) ?? [])
+        hidden.formUnion(removed)
+        hidden.subtract(nextIDs)
+        defaults.set(Array(hidden).sorted(), forKey: hiddenProvidersKey)
     }
 
     private static func normalizedProviders(rawIdentifiers: [String]?) -> [CapacityDockProvider] {
